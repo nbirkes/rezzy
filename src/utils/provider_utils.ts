@@ -61,3 +61,25 @@ export function checkOpenAIEnv(): void {
     throw new Error(validation.message);
   }
 }
+
+/**
+ * Extracts JSON from a string that may contain markdown code blocks or extra text.
+ * Returns the raw JSON string if found, otherwise returns the input string.
+ */
+export function extractJsonFromMarkdown(text: string): string {
+  // Try to match a markdown code block
+  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)```/;
+  const match = text.match(codeBlockRegex);
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+  // Fallback: try to find the first curly brace and parse from there
+  const firstBrace = text.indexOf("{");
+  if (firstBrace !== -1) {
+    const lastBrace = text.lastIndexOf("}");
+    if (lastBrace !== -1 && lastBrace > firstBrace) {
+      return text.substring(firstBrace, lastBrace + 1);
+    }
+  }
+  return text.trim();
+}

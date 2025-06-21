@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { fetchAiCoverLetter } from "../../src/repos/openai_repo.ts";
+import { OpenAIProvider } from "../../src/repos/openai_provider.ts";
 import { ResumeSchema } from "@kurone-kito/jsonresume-types";
 import dotenv from "dotenv";
 
@@ -100,8 +100,11 @@ Deno.test({
     console.log(`Using model: ${model}`);
     
     try {
+      // Instantiate OpenAIProvider
+      const openAIProvider = new OpenAIProvider();
+      
       // Make the actual API call to OpenAI
-      const coverLetter = await fetchAiCoverLetter(
+      const coverLetter = await openAIProvider.generateCoverLetter(
         sampleJobDescription,
         sampleResume
       );

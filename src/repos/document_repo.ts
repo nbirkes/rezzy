@@ -1,6 +1,6 @@
 import { ResumeSchema } from "@kurone-kito/jsonresume-types";
 import { z } from "zod";
-import { checkOpenAIEnv } from "../utils/openai_utils.ts";
+import { checkOpenAIEnv } from "../utils/provider_utils.ts";
 import OpenAI, { toFile } from "openai";
 import type { ResponseFormatJSONSchema } from "openai/resources/shared";
 

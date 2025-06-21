@@ -1,9 +1,9 @@
 # rezzy
 
-AI powered resume and cover letter generator that works with JSON Resume and PDF documents.
+AI powered resume and cover letter generator that works with JSON Resume and PDF documents. Supports both OpenAI and Ollama as LLM providers.
 
 ## Resume Generation
-Converts JSON Resume or PDF documents to LaTeX and optionally uses OpenAI to build a LaTeX cover letter using your resume and the supplied job description text file.
+Converts JSON Resume or PDF documents to LaTeX and optionally uses an LLM provider (OpenAI or Ollama) to build a LaTeX cover letter using your resume and the supplied job description text file.
 
 ```
 Usage: deno task rezzy [OPTIONS]... 
@@ -17,6 +17,7 @@ Options:
   --jd              Job description path to .txt file
   --prompt          Optional AI prompt for cover letter generation
   -o, --output      Base output path for LaTeX files (default: based on input filename)
+  --provider        LLM provider to use (openai [default] or ollama)
   --help            Display this help message
 
 Examples:
@@ -27,6 +28,7 @@ Examples:
   deno task rezzy --resume https://www.example.com/resume.json --jd ../jobs/job-desc.txt 
   deno task rezzy --resume ../resume.json --jd ../jobs/job-desc.txt --prompt "Add bullet points to my cover letter describing why I am a good candidate for this job description"
   deno task rezzy --resume ../resume.json -o my_custom_output
+  deno task rezzy --document ../resume.pdf --provider ollama --jd ../jobs/job-desc.txt
 ```
 
 ## Command-Line Parameters
@@ -41,7 +43,7 @@ Examples:
 
 - `--document`: Path to a PDF resume document
   - Currently only supports PDF files
-  - Uses OpenAI to extract and structure information from the document
+  - Uses the selected LLM provider (OpenAI or Ollama) to extract and structure information from the document
   - Cannot be used together with `--resume`
   - Automatically saves the extracted JSON Resume data alongside the PDF
 
@@ -54,6 +56,10 @@ Examples:
   - Optional additional prompt to guide the AI in generating the cover letter
   - Can be used to request specific formatting or content in the cover letter
   - Only used when `--jd` is also provided
+
+- `--provider`: LLM provider to use for AI-powered features
+  - Accepts `openai` (default) or `ollama`
+  - Can also be set via the `LLM_PROVIDER` environment variable
 
 ### Output Parameters
 
@@ -107,15 +113,15 @@ The generated LaTeX files are complete, standalone documents that can be compile
 
 ## Document Conversion
 When using the `--document` option with a PDF document, rezzy will:
-1. Upload the PDF document directly to OpenAI
-2. Use OpenAI to extract and structure information from the document
+1. Use the selected LLM provider (OpenAI or Ollama) to process the PDF document
+2. Extract and structure information from the document
 3. Process the extracted information according to the JSON Resume schema
 4. Save the converted JSON alongside the original document
 5. Generate the LaTeX resume from the converted JSON
 
-> ⚠️ **Note**: Currently, only PDF files are supported for document processing with OpenAI.
+> ⚠️ **Note**: For Ollama, you must use a multimodal model (such as LLaVA) for document processing. Set the `OLLAMA_MODEL` environment variable accordingly.
 
-The conversion process uses OpenAI to intelligently extract and structure information from the document text, according to the JSON Resume schema. This approach provides accurate results while avoiding compatibility issues with different document formats.
+The conversion process uses the LLM provider to intelligently extract and structure information from the document text, according to the JSON Resume schema. This approach provides accurate results while avoiding compatibility issues with different document formats.
 
 ### JSON Resume Output
 When processing a PDF document, rezzy automatically saves the extracted JSON Resume data to a file with the same base name as the input file but with a `.json` extension. For example:
@@ -126,13 +132,15 @@ This JSON file follows the [JSON Resume schema](https://jsonresume.org/schema/) 
 ### Error Handling
 The document processing system includes error handling with detailed logging:
 
-1. If the OpenAI processing fails, an error is thrown with information about the failure
+1. If the LLM provider processing fails, an error is thrown with information about the failure
 2. Detailed logging is provided throughout the process to help diagnose any issues
 3. The intermediate JSON representation is saved to a file with a timestamp for reference
 
 ## Environment Setup
 
-To use rezzy, you need to set up the following environment variables:
+To use rezzy, you need to set up the following environment variables depending on your provider:
+
+### OpenAI Provider
 
 ```bash
 # Required for OpenAI integration
@@ -140,16 +148,27 @@ export OPENAI_API_KEY=your_api_key_here
 export OPENAI_MODEL=gpt-4o  # For PDF document processing (optional)
 ```
 
-### Environment Variables
-
 - `OPENAI_API_KEY`: Your OpenAI API key
-  - Required for both cover letter generation and PDF document processing
-  - Must have appropriate permissions for the models you intend to use
-
 - `OPENAI_MODEL`: The OpenAI model to use for PDF document processing and cover letter generation
-  - Required when using the `--document` option or generating cover letters
-  - Recommended to use a model with strong capabilities like 'gpt-4o'
-  - If not specified, falls back to 'gpt-4o'
+
+### Ollama Provider
+
+```bash
+# Required for Ollama integration
+export OLLAMA_HOST=http://localhost:11434  # Or your Ollama server URL
+export OLLAMA_MODEL=gemma3  # Or another supported model (e.g., llama3, llava)
+```
+
+- `OLLAMA_HOST` (or `OLLAMA_CLIENT_HOST`/`OLLAMA_API_BASE_URL`): The base URL of your Ollama server
+- `OLLAMA_MODEL`: The Ollama model to use (stick with the newer, more performant models)
+
+You can also place these in a .env at the root of the project and include the ```--env-file=.env``` deno argument
+
+You can also set the provider via environment variable:
+
+```bash
+export LLM_PROVIDER=ollama  # or openai
+```
 
 ### Supported OpenAI Models
 
@@ -168,6 +187,11 @@ If you encounter a "403 Forbidden" error, it may be because:
 2. Your API key doesn't have permission to use the specified model
 3. The model specified in OPENAI_MODEL environment variable is not available
 
+### Supported Ollama Models
+
+- All non-reasoning models available on Ollama platform
+- Reasoning models may provide unexpected results
+
 ## Testing
 
 Tests are organized in a dedicated `test/` directory that mirrors the structure of the `src/` directory:
@@ -183,6 +207,7 @@ test/
 │   ├── repos/
 │   │   ├── document_repo_test.ts
 │   │   ├── openai_repo_test.ts
+│   │   ├── ollama_provider_test.ts
 │   │   └── resume_repo_test.ts
 │   └── utils/
 │       └── openai_utils_test.ts
@@ -193,7 +218,9 @@ test/
 │   └── environment_validation_test.ts
 └── end_to_end/            # Tests with real external service calls
     ├── cover_letter_generation_e2e_test.ts
+    ├── cover_letter_generation_ollama_e2e_test.ts
     ├── document_processing_e2e_test.ts
+    ├── document_processing_ollama_e2e_test.ts
     ├── dummy_resume_JANE_DOE.pdf
     └── dummy_resume_JOE_SCHMOE.pdf
 ```
@@ -212,43 +239,54 @@ The project includes three types of tests:
 
 1. **Unit Tests**: Located in the `test/unit/` directory, these tests verify the behavior of individual components in isolation. They use mocks and stubs to avoid dependencies on external services.
 
-2. **Regression Tests**: Located in the `test/regression/` directory, these tests verify workflows and ensure that previously fixed bugs don't reappear. They test the integration between components and ensure the application handles edge cases correctly. These tests use mocks for external services like OpenAI to make them fast, reliable, and free to run.
+2. **Regression Tests**: Located in the `test/regression/` directory, these tests verify workflows and ensure that previously fixed bugs don't reappear. They test the integration between components and ensure the application handles edge cases correctly. These tests use mocks for external services like OpenAI and Ollama to make them fast, reliable, and free to run.
 
-3. **End-to-End Tests**: Located in the `test/end_to_end/` directory, these tests verify the integration with external services like OpenAI. They make actual API calls and verify the results.
+3. **End-to-End Tests**: Located in the `test/end_to_end/` directory, these tests verify the integration with external services like OpenAI and Ollama. They make actual API calls and verify the results.
 
 The regression tests cover the following areas:
 - Resume generation from JSON data
 - Cover letter generation and integration with resume data
-- Document processing with OpenAI (using mocks)
+- Document processing with OpenAI and Ollama (using mocks)
 - Environment variable validation
 
 ### End-to-End Testing
 
-While the regression tests provide good coverage of the application's functionality, they don't test the actual integration with external services like OpenAI. For true end-to-end testing, you would need to make actual API calls to OpenAI, which has some considerations:
+While the regression tests provide good coverage of the application's functionality, they don't test the actual integration with external services like OpenAI or Ollama. For true end-to-end testing, you would need to make actual API calls, which has some considerations:
 
 - **Cost**: OpenAI API calls are not free and will incur charges
 - **Rate Limits**: You may hit rate limits if running many tests
 - **API Keys**: You need valid API keys with appropriate permissions
 - **Reliability**: Tests may fail due to service disruptions or changes in the API
+- **Ollama**: You must have a running Ollama server and the required models installed
 
 The project includes example end-to-end tests in the `test/end_to_end/` directory:
 
 - `cover_letter_generation_e2e_test.ts`: Tests the cover letter generation with real OpenAI API calls
 - `document_processing_e2e_test.ts`: Tests the document processing with real OpenAI API calls
+- `cover_letter_generation_ollama_e2e_test.ts`: Tests the cover letter generation with real Ollama API calls
+- `document_processing_ollama_e2e_test.ts`: Tests the document processing with real Ollama API calls
 - Sample PDF files for testing document processing
 
 These tests are ignored by default to prevent accidental API calls. To run them:
 
 ```bash
-# Set up environment variables
+# Set up environment variables for your provider
 export OPENAI_API_KEY=your_actual_api_key
 export OPENAI_MODEL=gpt-4o
+export OLLAMA_HOST=http://localhost:11434
+export OLLAMA_MODEL=llava
 
-# For cover letter generation test
+# For OpenAI cover letter generation test
 deno test --allow-env --allow-net test/end_to_end/cover_letter_generation_e2e_test.ts
 
-# For document processing test (requires a test PDF file)
+# For Ollama cover letter generation test
+deno test --allow-env --allow-net test/end_to_end/cover_letter_generation_ollama_e2e_test.ts
+
+# For OpenAI document processing test (requires a test PDF file)
 deno test --allow-env --allow-read --allow-write --allow-net test/end_to_end/document_processing_e2e_test.ts
+
+# For Ollama document processing test (requires a test PDF file)
+deno test --allow-env --allow-read --allow-write --allow-net test/end_to_end/document_processing_ollama_e2e_test.ts
 ```
 
 You'll need to edit the test files to:
@@ -322,6 +360,7 @@ The prompt is appended to the system instructions that guide the AI in generatin
 
 ## Dependencies
  - OpenAI - https://openai.com/
+ - Ollama - https://ollama.com/
  - TypeChat - https://microsoft.github.io/TypeChat/
  - deno - https://deno.com/
  - Zod - https://zod.dev

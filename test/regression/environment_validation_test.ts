@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from "@std/assert";
-import { validateOpenAIEnv, checkOpenAIEnv } from "../../src/utils/openai_utils.ts";
+import { validateOpenAIEnv, checkOpenAIEnv } from "../../src/utils/provider_utils.ts";
 import { withMockEnv } from "../../test/unit/test_utils.ts";
 
 /**

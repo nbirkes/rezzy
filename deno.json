@@ -14,6 +14,7 @@
     "@std/cli": "jsr:@std/cli@^1.0.19",
     "openai": "npm:openai@^5.3.0",
     "typechat": "npm:typechat@^0.1.1",
+    "unpdf": "npm:unpdf@^1.0.6",
     "zod": "npm:zod@^3.25.57",
     "dotenv": "npm:dotenv",
     "path": "npm:path"

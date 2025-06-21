@@ -1,21 +1,23 @@
 import { Rezzy } from "./rezzy.ts";
-import dotenv from "dotenv";
-import * as path from "path";
 import { parseArgs } from "jsr:@std/cli/parse-args";
 import { assert } from "@std/assert";
 import { logTempFile } from "./logger.ts";
-import { fetchAiCoverLetter } from "./repos/openai_repo.ts";
 import { fetchResume } from "./repos/resume_repo.ts";
 import { ResumeSchema } from "@kurone-kito/jsonresume-types";
+import { getProviderConfig } from "./config.ts";
+import { OpenAIProvider } from "./repos/openai_provider.ts";
+import { OllamaProvider } from "./repos/ollama_provider.ts";
+import { LlmProvider } from "./interfaces.ts";
+import { extractPdfText } from "./utils/extract_pdf_text.ts";
 
-// Load environment variables.
-const __dirname = new URL('.', import.meta.url).pathname;
-dotenv.config({
-    path: `${__dirname}../.env`,
-    override: false // Use environment variables as default
+// Provider selection logic moved up to check provider before requiring OpenAI env vars
+const flags = parseArgs(Deno.args, {
+  string: ["resume", "jd", "prompt", "document", "output", "o", "provider"],
+  alias: { o: "output", h: "help" },
+  boolean: ["help"],
 });
-
-if (!process.env.OPENAI_API_KEY || !process.env.OPENAI_MODEL) {
+const providerFlag = flags.provider || Deno.env.get("LLM_PROVIDER") || "openai";
+if (providerFlag === "openai" && (!Deno.env.get("OPENAI_API_KEY") || !Deno.env.get("OPENAI_MODEL"))) {
     console.log(`
 Environment variables not found. Please set the following:
 
@@ -49,6 +51,7 @@ Options:
   --jd              Job description path to .txt file
   --prompt          Optional AI prompt for cover letter generation
   -o, --output      Base output path for LaTeX files (default: based on input filename)
+  --provider        LLM provider to use (default: openai)
   --help            Display this help message
 
 Examples:
@@ -66,11 +69,7 @@ Note:
 // TODO: Rename the 'resume' CLI flag to 'json' to better indicate that it accepts JSON Resume input.
 //       Keep 'document' flag name as is since it will eventually support multiple document formats 
 //       beyond PDF. Once document support is complete, we can deprecate the 'json' flag entirely.
-const flags = parseArgs(Deno.args, {
-  string: ["resume", "jd", "prompt", "document", "output", "o"],
-  alias: { o: "output", h: "help" },
-  boolean: ["help"],
-});
+type CLIProviderType = "openai" | "ollama";
 
 // Display help if requested or if no arguments provided
 if (flags.help || Deno.args.length === 0) {
@@ -90,33 +89,65 @@ try {
   Deno.exit(1);
 }
 
-let resumeJson: ResumeSchema;
+// Pass CLI provider flag to config
+// Only use Deno.env.get for environment variables
+function getProviderConfigWithCLI({ cliProvider }: { cliProvider?: CLIProviderType } = {}): LlmProviderConfig {
+  const provider = (cliProvider || Deno.env.get("LLM_PROVIDER") || "openai") as CLIProviderType;
+  if (provider === "openai") {
+    const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+    const apiBaseUrl = Deno.env.get("OPENAI_API_BASE_URL");
+    const model = Deno.env.get("OPENAI_MODEL");
+    if (!apiKey) throw new Error("OPENAI_API_KEY is required");
+    return { provider, apiKey, apiBaseUrl, model };
+  } else if (provider === "ollama") {
+    // Prefer OLLAMA_CLIENT_HOST, fallback to API_BASE_URL, then OLLAMA_HOST
+    const apiBaseUrl = Deno.env.get("OLLAMA_CLIENT_HOST") ?? Deno.env.get("OLLAMA_API_BASE_URL") ?? Deno.env.get("OLLAMA_HOST") ?? "";
+    const model = Deno.env.get("OLLAMA_MODEL");
+    if (!apiBaseUrl) throw new Error("OLLAMA_CLIENT_HOST, OLLAMA_API_BASE_URL or OLLAMA_HOST is required");
+    return { provider, apiBaseUrl, model };
+  }
+  throw new Error(`Unknown provider: ${provider}`);
+}
 
+// Provider instantiation
+const providerConfig = getProviderConfigWithCLI({ cliProvider: flags.provider });
+let provider: LlmProvider;
+if (providerConfig.provider === "openai") {
+  provider = new OpenAIProvider();
+} else if (providerConfig.provider === "ollama") {
+  provider = new OllamaProvider(providerConfig.apiBaseUrl, providerConfig.model ?? "llama3");
+} else {
+  throw new Error(`Provider '${providerConfig.provider}' not implemented yet.`);
+}
+
+let resumeJson: ResumeSchema;
 if (flags.resume) {
   // Traditional flow: fetch resume from JSON file or URL
   resumeJson = await fetchResume(flags.resume);
+} else if (providerConfig.provider === "ollama" && flags.document && flags.document.match(/\.pdf$/i)) {
+  // Ollama + PDF: extract text first, then process as plain text
+  const extractedText = await extractPdfText(flags.document);
+  resumeJson = await (provider as OllamaProvider).processResumeText(extractedText);
+  // Optionally save the extracted text for reference
+  const txtPath = flags.document.replace(/\.(pdf)$/i, '.txt');
+  await Deno.writeTextFile(txtPath, extractedText);
+  console.log(`Extracted PDF text saved as: ${txtPath}`);
+  // Optionally save the converted JSON for reference
+  const jsonPath = flags.document.replace(/\.(pdf)$/i, '.json');
+  await Deno.writeTextFile(jsonPath, JSON.stringify(resumeJson, null, 2));
+  console.log(`Converted document saved as JSON: ${jsonPath}`);
 } else {
-  // New flow: process document directly with OpenAI
-  try {
-    // Import the processDocumentWithOpenAI function
-    const { processDocumentWithOpenAI } = await import("./repos/document_repo.ts");
-
-    // Process the document directly with OpenAI
-    resumeJson = await processDocumentWithOpenAI(flags.document);
-
-    // Optionally save the converted JSON for reference
-    const jsonPath = flags.document.replace(/\.(pdf)$/i, '.json');
-    await Deno.writeTextFile(jsonPath, JSON.stringify(resumeJson, null, 2));
-    console.log(`Converted document saved as JSON: ${jsonPath}`);
-  } catch (error) {
-    console.error("Error processing document with OpenAI:", error);
-    throw new Error("Failed to process document with OpenAI.");
-  }
+  // Default: process document directly (for OpenAI or non-PDF)
+  resumeJson = await provider.processDocument(flags.document);
+  // Optionally save the converted JSON for reference
+  const jsonPath = flags.document.replace(/\.(pdf)$/i, '.json');
+  await Deno.writeTextFile(jsonPath, JSON.stringify(resumeJson, null, 2));
+  console.log(`Converted document saved as JSON: ${jsonPath}`);
 }
 
 const jobDescription = flags.jd ? Deno.readTextFileSync(flags.jd) : undefined;
 const letter = jobDescription
-  ? await fetchAiCoverLetter(jobDescription, resumeJson, flags.prompt)
+  ? await provider.generateCoverLetter(jobDescription, resumeJson, flags.prompt)
   : undefined;
 const rezzy = new Rezzy(resumeJson, letter);
 const result = rezzy.buildRezzyResult();
